@@ -63,6 +63,7 @@ executable Halo
                     ,  bytestring
                     ,  text
                     ,  mtl
+                    ,  parsec
   
   -- Directories containing source files.
   hs-source-dirs:      src
