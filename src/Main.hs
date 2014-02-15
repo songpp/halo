@@ -1,13 +1,13 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, BangPatterns #-}
 
 module Main where
 
 import           Control.Concurrent         (forkIO)
 import           Control.Exception          (bracket, finally)
 import           Control.Monad              (forever, when)
-import qualified Data.ByteString.Lazy            as B
+import qualified Data.ByteString.Lazy       as B
 import qualified Data.ByteString.Lazy.Char8 as C
-import           HttpRequestParser          (HttpRequestHeadLine (..),
+import           HttpRequestParser          (Header (..), HttpRequest (..), HttpRequestLine (..),
                                              parseRequest)
 import           Network                    (PortID (..), listenOn)
 import           Network.Socket
@@ -18,28 +18,28 @@ import           System.IO
 main :: IO ()
 main = withSocketsDo $ bracket (listenOn $ PortNumber 9000) sClose loop
     where
---      loop s = forever $ forkIO . request . fst =<< accept s
-        loop s = forever $ forkIO . handleRequest . fst =<< accept s
---      request c = sendAll c resp `finally` sClose c
+        loop s = forever $ forkIO . handleConnection . fst =<< accept s
 
 
 resp :: String
-resp = "HTTP/1.0 200 OK\nContent-Length: 16\n\nGoodbye, World!\n"
+resp = "HTTP/1.1 200 OK\nContent-Length: 16\n\nGoodbye, World!\n"
 
-handleRequest :: Socket -> IO ()
-handleRequest = readAndParseRequest
+handleConnection :: Socket -> IO ()
+handleConnection sock = bracket (socketToHandle sock ReadWriteMode) hClose process
     where
-        readAndParseRequest = readRequest
-
-        -- read request
-        readRequest sock = do
-            h <- socketToHandle sock ReadWriteMode
+        process :: Handle -> IO ()
+        process h = do
             msgs <- B.hGetContents h
-            req <- handleMessage msgs
-            print . show $ req
-            hPutStr h resp
-            hClose h
+            req <- parse msgs
+            handleRequest (req, h)
 
-        handleMessage :: B.ByteString -> IO HttpRequestHeadLine
-        handleMessage = return . parseRequest . C.unpack
+        parse :: B.ByteString -> IO HttpRequest
+        parse = return . parseRequest . C.unpack
+
+
+handleRequest :: (HttpRequest, Handle) -> IO ()
+handleRequest (req, conn) = do
+    print . show $ req
+    hPutStr conn resp
+
 

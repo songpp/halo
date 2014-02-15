@@ -3,63 +3,81 @@
 module HttpRequestParser where
 
 import           Text.ParserCombinators.Parsec
+import qualified Data.IntSet as S
 
 
-data HttpRequest
+data HttpRequest = HttpRequest {
+    request :: HttpRequestLine,
+    headers :: [Header],
+    body :: Maybe String  -- todo
+} deriving Show
 
-data HttpVersion = HttpVersion String deriving (Read,Show)
 
-httpV10, httpV11 :: HttpVersion
-httpV10 = HttpVersion "HTTP/1.0"
-httpV11 = HttpVersion "HTTP/1.1"
-
-data HttpMethod = GET | POST | PUT | DELETE | HEAD deriving (Read, Show, Eq)
-
-data HttpRequestHeadLine = HeadLine {
-    method  :: HttpMethod,
+data HttpRequestLine = RequestLine {
+    method  :: String,
     url     :: String,
-    version :: HttpVersion
+    version :: Int
 } deriving (Show)
 
+data Header = Header {
+    name :: String,
+    value :: [String]
+} deriving (Eq, Ord, Show)
 
+
+parseRequest :: String -> HttpRequest
 parseRequest input = case run of
-    Left e -> error $ show e
+    Left e -> error $ show e ++ " => " ++  input
     Right req -> req
     where 
-        run = parse parseHttpRequest "headline" input
+        run = parse parseHttpRequest "request" input
 
-parseHttpRequest :: Parser HttpRequestHeadLine
+parseHttpRequest :: Parser HttpRequest
 parseHttpRequest = do
     hl <- headLine
-    return hl
+    headers <- many requestHeader
+    crlf
+    return $! HttpRequest hl headers Nothing
 
-headLine :: Parser HttpRequestHeadLine
+requestHeader :: Parser Header
+requestHeader = do
+    header <- many token'   
+    char ':' >> skipMany whiteSpace
+    body <- manyTill anyChar crlf
+    conts <- many $ (many1 whiteSpace) >> manyTill anyChar crlf
+    return $ Header header (body:conts)
+
+headLine :: Parser HttpRequestLine
 headLine = do
     m <- methods
     whiteSpace
-    u <- parseURL
+    u <- many1 (satisfy $ not . isWhiteSpace)
     whiteSpace
-    v <- versions
-    nl
-    return $ HeadLine (read m :: HttpMethod) u v
+    v <- string "HTTP/1." >> versions
+    crlf
+    return $ RequestLine m u v
 
-whiteSpace :: Parser Char
-whiteSpace = char ' '
+isWhiteSpace c = ' ' == c || '\t' == c
 
-versions :: Parser HttpVersion
-versions =  try (string "HTTP/1.0" >> return httpV10)
-        <|> try (string "HTTP/1.1" >> return httpV11)
-        <|> fail "unkonwn http version"
+whiteSpace = satisfy isWhiteSpace
+
+versions :: Parser Int
+versions =  try (char '0' >> return 0)
+        <|> (char '1' >> return 1)
 
 methods :: Parser String
 methods =   try (string "GET")
         <|> try (string "POST")
         <|> try (string "DELETE")
-        <|> try (string  "HEAD")
+        <|> try (string "HEAD")
         <|> fail "unknown http method"
+        
 
-parseURL :: Parser String
-parseURL = many (noneOf " ")
+endOfLine = try (crlf >> return ()) <|> (char '\n' >> return ())
 
-nl :: Parser String
-nl = string "\r\n"
+crlf = string "\r\n"
+
+token' = satisfy $ \c -> S.notMember (fromEnum c) set
+  where 
+    set = S.fromList . map fromEnum $ ['\0'..'\31'] ++ "()<>@,;:\\\"/[]?={} \t" ++ ['\128'..'\255']
+
